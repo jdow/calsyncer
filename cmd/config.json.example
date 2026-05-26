@@ -1,0 +1,66 @@
+{
+  "destination": {
+    "url": "https://caldav.icloud.com",
+    "username": "you@icloud.com",
+    "password": "xxxx-xxxx-xxxx-xxxx",
+    "calendarName": "Family Calendar"
+  },
+  "sources": [
+    {
+      "name": "oncall",
+      "type": "ical",
+      "url": "https://your-pagerduty-ical-url.ics",
+      "emoji": "🚨"
+    },
+    {
+      "name": "work",
+      "type": "ical",
+      "url": "https://calendar.google.com/calendar/ical/you%40yourcompany.com/private-abc123/basic.ics",
+      "emoji": "💼",
+      "transforms": [
+        {
+          "whenSummary": "Do not disturb",
+          "skip": true
+        },
+        {
+          "whenSummaryContains": "standup",
+          "skip": true
+        },
+        {
+          "whenSummaryContains": "sync",
+          "skip": true
+        },
+        {
+          "whenSummaryContains": "busy",
+          "setSummary": "Busy"
+        },
+        {
+          "whenSummaryContains": "ooo",
+          "setSummary": "Out of Office"
+        },
+        {
+          "whenSummaryContains": "out of office",
+          "setSummary": "Out of Office"
+        }
+      ]
+    },
+    {
+      "name": "kid-sports",
+      "type": "ical",
+      "url": "https://teamsnap.com/api/v3/calendars/export/your-token-here",
+      "emoji": "⚽"
+    },
+    {
+      "name": "holidays",
+      "type": "ical",
+      "url": "https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics",
+      "emoji": "🎉",
+      "transforms": [
+        {
+          "whenSummaryContains": "observance",
+          "skip": true
+        }
+      ]
+    }
+  ]
+}

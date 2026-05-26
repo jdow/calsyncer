@@ -1,0 +1,413 @@
+package ical_test
+
+import (
+	"testing"
+	"time"
+
+	goical "github.com/emersion/go-ical"
+	"github.com/jdow/calsyncer/internal/ical"
+)
+
+func makeEvent(uid, summary, dtstart, dtend string) *goical.Component {
+	ev := goical.NewComponent(goical.CompEvent)
+	ev.Props.SetText(goical.PropUID, uid)
+	ev.Props.SetText(goical.PropSummary, summary)
+
+	if dtstart != "" {
+		p := goical.NewProp(goical.PropDateTimeStart)
+		p.Value = dtstart
+		ev.Props[goical.PropDateTimeStart] = []goical.Prop{*p}
+	}
+	if dtend != "" {
+		p := goical.NewProp(goical.PropDateTimeEnd)
+		p.Value = dtend
+		ev.Props[goical.PropDateTimeEnd] = []goical.Prop{*p}
+	}
+	return ev
+}
+
+func makeGroup(uid, summary, dtstart, dtend string) *ical.EventGroup {
+	ev := makeEvent(uid, summary, dtstart, dtend)
+	key := uid + ":" + dtstart
+	return &ical.EventGroup{UID: uid, Key: key, Parent: ev}
+}
+
+func makeDateGroup(uid, summary, dtstart, dtend string) *ical.EventGroup {
+	ev := goical.NewComponent(goical.CompEvent)
+	ev.Props.SetText(goical.PropUID, uid)
+	ev.Props.SetText(goical.PropSummary, summary)
+
+	// DATE-only DTSTART
+	p := goical.NewProp(goical.PropDateTimeStart)
+	p.SetDate(mustParseDate(dtstart))
+	ev.Props[goical.PropDateTimeStart] = []goical.Prop{*p}
+
+	pe := goical.NewProp(goical.PropDateTimeEnd)
+	pe.SetDate(mustParseDate(dtend))
+	ev.Props[goical.PropDateTimeEnd] = []goical.Prop{*pe}
+
+	key := uid + ":" + dtstart
+	return &ical.EventGroup{UID: uid, Key: key, Parent: ev}
+}
+
+func mustParseDate(s string) time.Time {
+	t, err := time.ParseInLocation("20060102", s, time.UTC)
+	if err != nil {
+		panic("bad date: " + s)
+	}
+	return t
+}
+
+
+func makeTimedGroup(uid, summary string, dtstart, dtend time.Time) *ical.EventGroup {
+	ev := goical.NewComponent(goical.CompEvent)
+	ev.Props.SetText(goical.PropUID, uid)
+	ev.Props.SetText(goical.PropSummary, summary)
+
+	ps := goical.NewProp(goical.PropDateTimeStart)
+	ps.SetDateTime(dtstart)
+	ev.Props[goical.PropDateTimeStart] = []goical.Prop{*ps}
+
+	pe := goical.NewProp(goical.PropDateTimeEnd)
+	pe.SetDateTime(dtend)
+	ev.Props[goical.PropDateTimeEnd] = []goical.Prop{*pe}
+
+	key := uid + ":" + dtstart.Format("20060102T150405Z")
+	return &ical.EventGroup{UID: uid, Key: key, Parent: ev}
+}
+
+func TestSummary_WithSummary(t *testing.T) {
+	g := makeGroup("uid1", "My Event", "20240115T090000Z", "20240115T100000Z")
+	if got := g.Summary(); got != "My Event" {
+		t.Errorf("got %q, want %q", got, "My Event")
+	}
+}
+
+func TestSummary_NoSummary(t *testing.T) {
+	ev := goical.NewComponent(goical.CompEvent)
+	g := &ical.EventGroup{UID: "uid1", Key: "uid1", Parent: ev}
+	if got := g.Summary(); got != "(no summary)" {
+		t.Errorf("got %q, want \"(no summary)\"", got)
+	}
+}
+
+func makeException(uid, summary, dtstart, recurrenceID string) *goical.Component {
+	ev := makeEvent(uid, summary, dtstart, "")
+	rp := goical.NewProp(goical.PropRecurrenceID)
+	rp.Value = recurrenceID
+	ev.Props[goical.PropRecurrenceID] = []goical.Prop{*rp}
+	return ev
+}
+
+func TestHashGroup_WithExceptions(t *testing.T) {
+	g := makeGroup("uid1", "Recurring", "20240115T090000Z", "20240115T100000Z")
+	ex1 := makeException("uid1", "Exception A", "20240116T090000Z", "20240116T090000Z")
+	ex2 := makeException("uid1", "Exception B", "20240117T090000Z", "20240117T090000Z")
+	g.Exceptions = []*goical.Component{ex1, ex2}
+
+	h1 := ical.HashGroup(g)
+
+	// Reverse exception order — hash must be stable (exceptions are sorted by RECURRENCE-ID)
+	g2 := makeGroup("uid1", "Recurring", "20240115T090000Z", "20240115T100000Z")
+	g2.Exceptions = []*goical.Component{ex2, ex1}
+	h2 := ical.HashGroup(g2)
+
+	if h1 != h2 {
+		t.Errorf("hash should be stable regardless of exception order: %q vs %q", h1, h2)
+	}
+
+	// Change an exception — hash must differ
+	ex1mod := makeException("uid1", "Exception A MODIFIED", "20240116T090000Z", "20240116T090000Z")
+	g3 := makeGroup("uid1", "Recurring", "20240115T090000Z", "20240115T100000Z")
+	g3.Exceptions = []*goical.Component{ex1mod, ex2}
+	h3 := ical.HashGroup(g3)
+	if h1 == h3 {
+		t.Error("hash should change when exception is modified")
+	}
+}
+
+func TestSplitMultiDayGroup_NoDTSTART(t *testing.T) {
+	// Event with no DTSTART at all — should return original group unchanged
+	ev := goical.NewComponent(goical.CompEvent)
+	ev.Props.SetText(goical.PropUID, "uid-nodtstart")
+	ev.Props.SetText(goical.PropSummary, "No DTSTART")
+	g := &ical.EventGroup{UID: "uid-nodtstart", Key: "uid-nodtstart", Parent: ev}
+
+	result := ical.SplitMultiDayGroup(g)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 group for event with no DTSTART, got %d", len(result))
+	}
+	if result[0] != g {
+		t.Error("expected original group returned unchanged")
+	}
+}
+
+func TestSplitMultiDayGroup_UnparsableDTSTART(t *testing.T) {
+	// Event with an unparseable DTSTART value — eventTimeRange fails, return original
+	ev := goical.NewComponent(goical.CompEvent)
+	ev.Props.SetText(goical.PropUID, "uid-badstart")
+	p := goical.NewProp(goical.PropDateTimeStart)
+	p.Value = "NOTADATE"
+	ev.Props[goical.PropDateTimeStart] = []goical.Prop{*p}
+
+	g := &ical.EventGroup{UID: "uid-badstart", Key: "uid-badstart", Parent: ev}
+	result := ical.SplitMultiDayGroup(g)
+	if len(result) != 1 || result[0] != g {
+		t.Error("expected original group for unparseable DTSTART")
+	}
+}
+
+func TestSplitMultiDayGroup_DurationProp(t *testing.T) {
+	// Event with DURATION instead of DTEND spanning two local days:
+	// starts at 22:00 local, 4h duration → ends 02:00 local next day.
+	start := time.Date(2024, 1, 15, 22, 0, 0, 0, time.Local)
+	ev := goical.NewComponent(goical.CompEvent)
+	ev.Props.SetText(goical.PropUID, "uid-dur")
+	ev.Props.SetText(goical.PropSummary, "Duration Event")
+	ps := goical.NewProp(goical.PropDateTimeStart)
+	ps.SetDateTime(start)
+	ev.Props[goical.PropDateTimeStart] = []goical.Prop{*ps}
+	dur := goical.NewProp(goical.PropDuration)
+	dur.Value = "PT4H"
+	ev.Props[goical.PropDuration] = []goical.Prop{*dur}
+
+	key := "uid-dur:" + start.Format("20060102T150405Z")
+	g := &ical.EventGroup{UID: "uid-dur", Key: key, Parent: ev}
+
+	result := ical.SplitMultiDayGroup(g)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 segments for duration-based multi-day event, got %d", len(result))
+	}
+}
+
+func TestSplitMultiDayGroup_UnparsableDTEND(t *testing.T) {
+	// Event where DTEND is present but unparseable — eventTimeRange error → return original
+	start := time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)
+	ev := goical.NewComponent(goical.CompEvent)
+	ev.Props.SetText(goical.PropUID, "uid-badend")
+	ps := goical.NewProp(goical.PropDateTimeStart)
+	ps.SetDateTime(start)
+	ev.Props[goical.PropDateTimeStart] = []goical.Prop{*ps}
+	pe := goical.NewProp(goical.PropDateTimeEnd)
+	pe.Value = "NOTADATE"
+	ev.Props[goical.PropDateTimeEnd] = []goical.Prop{*pe}
+
+	g := &ical.EventGroup{UID: "uid-badend", Key: "uid-badend", Parent: ev}
+	result := ical.SplitMultiDayGroup(g)
+	if len(result) != 1 || result[0] != g {
+		t.Error("expected original group for unparseable DTEND")
+	}
+}
+
+func TestSplitMultiDayGroup_UnparsableDuration(t *testing.T) {
+	// Event where DURATION is present but unparseable — eventTimeRange error → return original
+	start := time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)
+	ev := goical.NewComponent(goical.CompEvent)
+	ev.Props.SetText(goical.PropUID, "uid-baddur")
+	ps := goical.NewProp(goical.PropDateTimeStart)
+	ps.SetDateTime(start)
+	ev.Props[goical.PropDateTimeStart] = []goical.Prop{*ps}
+	dur := goical.NewProp(goical.PropDuration)
+	dur.Value = "NOTADURATION"
+	ev.Props[goical.PropDuration] = []goical.Prop{*dur}
+
+	g := &ical.EventGroup{UID: "uid-baddur", Key: "uid-baddur", Parent: ev}
+	result := ical.SplitMultiDayGroup(g)
+	if len(result) != 1 || result[0] != g {
+		t.Error("expected original group for unparseable DURATION")
+	}
+}
+
+func TestSplitMultiDayGroup_NoDTEND(t *testing.T) {
+	// Event with no DTEND and no DURATION: treated as zero-duration, no split
+	start := time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)
+	ev := goical.NewComponent(goical.CompEvent)
+	ev.Props.SetText(goical.PropUID, "uid-nodtend")
+	ev.Props.SetText(goical.PropSummary, "No DTEND")
+	ps := goical.NewProp(goical.PropDateTimeStart)
+	ps.SetDateTime(start)
+	ev.Props[goical.PropDateTimeStart] = []goical.Prop{*ps}
+
+	key := "uid-nodtend:" + start.Format("20060102T150405Z")
+	g := &ical.EventGroup{UID: "uid-nodtend", Key: key, Parent: ev}
+
+	result := ical.SplitMultiDayGroup(g)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 group for zero-duration event, got %d", len(result))
+	}
+	if result[0] != g {
+		t.Error("expected original group returned unchanged")
+	}
+}
+
+func TestPropValue(t *testing.T) {
+	ev := goical.NewComponent(goical.CompEvent)
+	ev.Props.SetText(goical.PropSummary, "Hello World")
+
+	got := ical.PropValue(ev, goical.PropSummary)
+	if got != "Hello World" {
+		t.Errorf("expected 'Hello World', got %q", got)
+	}
+
+	missing := ical.PropValue(ev, goical.PropDescription)
+	if missing != "" {
+		t.Errorf("expected empty string for missing prop, got %q", missing)
+	}
+}
+
+func TestHashGroup_Stable(t *testing.T) {
+	g := makeGroup("uid1", "Test Event", "20240115T090000Z", "20240115T100000Z")
+	h1 := ical.HashGroup(g)
+	h2 := ical.HashGroup(g)
+	if h1 != h2 {
+		t.Errorf("hash not stable: %q != %q", h1, h2)
+	}
+}
+
+func TestHashGroup_ContentChange(t *testing.T) {
+	g1 := makeGroup("uid1", "Original Summary", "20240115T090000Z", "20240115T100000Z")
+	g2 := makeGroup("uid1", "Changed Summary", "20240115T090000Z", "20240115T100000Z")
+
+	h1 := ical.HashGroup(g1)
+	h2 := ical.HashGroup(g2)
+	if h1 == h2 {
+		t.Errorf("expected different hashes after summary change, got same: %q", h1)
+	}
+}
+
+func TestSplitMultiDayGroup_SingleDay(t *testing.T) {
+	// Same local day: no split expected.
+	start := time.Date(2024, 1, 15, 9, 0, 0, 0, time.Local)
+	end := time.Date(2024, 1, 15, 17, 0, 0, 0, time.Local)
+	g := makeTimedGroup("uid1", "Single Day", start, end)
+
+	result := ical.SplitMultiDayGroup(g)
+	if len(result) != 1 {
+		t.Errorf("expected 1 group, got %d", len(result))
+	}
+	if result[0] != g {
+		t.Error("expected original group returned unchanged")
+	}
+}
+
+func TestSplitMultiDayGroup_TwoDay(t *testing.T) {
+	// Mon 09:00 → Tue 17:00 local — should produce 2 timed segments.
+	start := time.Date(2024, 1, 15, 9, 0, 0, 0, time.Local)
+	end := time.Date(2024, 1, 16, 17, 0, 0, 0, time.Local)
+	midnight := time.Date(2024, 1, 16, 0, 0, 0, 0, time.Local)
+	g := makeTimedGroup("uid1", "Two Day", start, end)
+
+	result := ical.SplitMultiDayGroup(g)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(result))
+	}
+
+	checkTimedSegment(t, result[0], start, midnight.UTC(), "uid1:20240115T090000Z:split:0")
+	checkTimedSegment(t, result[1], midnight.UTC(), end, "uid1:20240115T090000Z:split:1")
+}
+
+func TestSplitMultiDayGroup_ThreeDay(t *testing.T) {
+	// Mon 09:00 → Wed 17:00 local — timed + allday + timed.
+	start := time.Date(2024, 1, 15, 9, 0, 0, 0, time.Local)
+	end := time.Date(2024, 1, 17, 17, 0, 0, 0, time.Local)
+	g := makeTimedGroup("uid1", "Three Day", start, end)
+
+	result := ical.SplitMultiDayGroup(g)
+	if len(result) != 3 {
+		t.Fatalf("expected 3 groups, got %d", len(result))
+	}
+
+	// First: Mon 09:00 local → Tue 00:00 UTC
+	checkTimedSegment(t, result[0], start, time.Date(2024, 1, 16, 0, 0, 0, 0, time.Local).UTC(), "uid1:20240115T090000Z:split:0")
+
+	// Middle: all-day Tue
+	seg1 := result[1]
+	if seg1.Key != "uid1:20240115T090000Z:split:1" {
+		t.Errorf("middle segment key: got %q", seg1.Key)
+	}
+	dtsProp := seg1.Parent.Props.Get(goical.PropDateTimeStart)
+	if dtsProp == nil {
+		t.Fatal("middle segment has no DTSTART")
+	}
+	if dtsProp.ValueType() != goical.ValueDate {
+		t.Errorf("middle segment DTSTART should be DATE, got %q", dtsProp.ValueType())
+	}
+
+	// Last: Wed 00:00 UTC → Wed 17:00 local
+	checkTimedSegment(t, result[2], time.Date(2024, 1, 17, 0, 0, 0, 0, time.Local).UTC(), end, "uid1:20240115T090000Z:split:2")
+}
+
+func TestSplitMultiDayGroup_Recurring(t *testing.T) {
+	start := time.Date(2024, 1, 15, 9, 0, 0, 0, time.Local)
+	end := time.Date(2024, 1, 17, 17, 0, 0, 0, time.Local)
+	g := makeTimedGroup("uid1", "Recurring Multi-Day", start, end)
+
+	// Add RRULE to make it recurring
+	rrule := goical.NewProp(goical.PropRecurrenceRule)
+	rrule.Value = "FREQ=WEEKLY"
+	g.Parent.Props[goical.PropRecurrenceRule] = []goical.Prop{*rrule}
+
+	result := ical.SplitMultiDayGroup(g)
+	if len(result) != 1 {
+		t.Errorf("recurring event should not be split, got %d groups", len(result))
+	}
+	if result[0] != g {
+		t.Error("expected original group returned unchanged")
+	}
+}
+
+func TestSplitMultiDayGroup_AllDayInput(t *testing.T) {
+	// DATE-only DTSTART should not be split
+	g := makeDateGroup("uid1", "All Day", "20240115", "20240117")
+
+	result := ical.SplitMultiDayGroup(g)
+	if len(result) != 1 {
+		t.Errorf("all-day event should not be split, got %d groups", len(result))
+	}
+	if result[0] != g {
+		t.Error("expected original group returned unchanged")
+	}
+}
+
+func TestSplitMultiDayGroup_MidnightEnd(t *testing.T) {
+	// Mon 09:00 → Tue 00:00 local: DTEND is exactly midnight, so no zero-duration last segment.
+	start := time.Date(2024, 1, 15, 9, 0, 0, 0, time.Local)
+	end := time.Date(2024, 1, 16, 0, 0, 0, 0, time.Local)
+	g := makeTimedGroup("uid1", "Midnight End", start, end)
+
+	result := ical.SplitMultiDayGroup(g)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 group (no zero-duration last segment), got %d", len(result))
+	}
+	checkTimedSegment(t, result[0], start, end.UTC(), "uid1:20240115T090000Z:split:0")
+}
+
+func checkTimedSegment(t *testing.T, seg *ical.EventGroup, wantStart, wantEnd time.Time, wantKey string) {
+	t.Helper()
+	if seg.Key != wantKey {
+		t.Errorf("key: got %q, want %q", seg.Key, wantKey)
+	}
+	dtsProp := seg.Parent.Props.Get(goical.PropDateTimeStart)
+	if dtsProp == nil {
+		t.Fatal("segment has no DTSTART")
+	}
+	gotStart, err := dtsProp.DateTime(time.Local)
+	if err != nil {
+		t.Fatalf("parsing segment DTSTART: %v", err)
+	}
+	if !gotStart.Equal(wantStart) {
+		t.Errorf("DTSTART: got %v, want %v", gotStart, wantStart)
+	}
+
+	dteProp := seg.Parent.Props.Get(goical.PropDateTimeEnd)
+	if dteProp == nil {
+		t.Fatal("segment has no DTEND")
+	}
+	gotEnd, err := dteProp.DateTime(time.Local)
+	if err != nil {
+		t.Fatalf("parsing segment DTEND: %v", err)
+	}
+	if !gotEnd.Equal(wantEnd) {
+		t.Errorf("DTEND: got %v, want %v", gotEnd, wantEnd)
+	}
+}
