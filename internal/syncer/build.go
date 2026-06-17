@@ -30,6 +30,7 @@ func BuildDestObject(
 
 	parent := copyComponent(group.Parent)
 	ensureDTSTAMP(parent)
+	removeDurationOrDTEnd(parent)
 	parent.Props.SetText(goical.PropUID, destUID)
 
 	if src.Emoji != "" {
@@ -45,6 +46,7 @@ func BuildDestObject(
 	for _, ex := range group.Exceptions {
 		destEx := copyComponent(ex)
 		ensureDTSTAMP(destEx)
+		removeDurationOrDTEnd(destEx)
 		destEx.Props.SetText(goical.PropUID, destUID)
 		cal.Children = append(cal.Children, destEx)
 	}
@@ -57,6 +59,16 @@ func BuildDestObject(
 	}
 
 	return cal, objPath
+}
+
+func removeDurationOrDTEnd(c *goical.Component) {
+	dtend := c.Props.Get(goical.PropDateTimeEnd)
+	duration := c.Props.Get(goical.PropDuration)
+
+	if dtend != nil && duration != nil {
+		// Prefer DTEND; drop DURATION
+		c.Props.Del(goical.PropDuration)
+	}
 }
 
 func copyComponent(ev *goical.Component) *goical.Component {
