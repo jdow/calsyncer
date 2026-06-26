@@ -115,10 +115,10 @@ func CloneComponent(ev *goical.Component) *goical.Component {
 
 // SplitMultiDayGroup splits a timed event that spans multiple calendar days into
 // per-day segments. The first and last days become timed events; any days in
-// between become all-day events.
+// between become all-day events. loc determines where calendar day boundaries fall.
 //
 // Recurring events (RRULE) and already all-day events (VALUE=DATE) are returned as-is.
-func SplitMultiDayGroup(group *EventGroup) []*EventGroup {
+func SplitMultiDayGroup(group *EventGroup, loc *time.Location) []*EventGroup {
 	// Don't split recurring events.
 	if group.Parent.Props.Get(goical.PropRecurrenceRule) != nil {
 		return []*EventGroup{group}
@@ -139,22 +139,22 @@ func SplitMultiDayGroup(group *EventGroup) []*EventGroup {
 		return []*EventGroup{group}
 	}
 
-	// Use the local timezone for day boundaries. UTC timestamps from feeds like
-	// PagerDuty would otherwise produce midnight cuts at midnight UTC (e.g. 5pm
-	// local in UTC-7) rather than at the local calendar day boundary.
-	loc := time.Local
+	if loc == nil {
+		loc = time.Local
+	}
 
 	startDay := truncateToDay(dtStart, loc)
 	endDay := truncateToDay(dtEnd, loc)
 
-	// If both endpoints fall on the same calendar day, no split needed.
-	if !endDay.After(startDay) {
+	// Only split if there is at least one full calendar day between start and end
+	// (i.e. endDay is strictly after the day after startDay). Events that merely
+	// cross a single midnight — like Mon 9am → Tue 8am — are left intact: splitting
+	// them would produce two timed segments with no all-day middle segment, which is
+	// the whole point of this function. It would also produce wrong split points when
+	// the server timezone differs from the user's timezone.
+	if !endDay.After(startDay.AddDate(0, 0, 1)) {
 		return []*EventGroup{group}
 	}
-
-	// Also no split if DTEND is exactly at midnight of the next day relative to
-	// startDay but that IS a different day — we still split unless it's the same day.
-	// (handled above)
 
 	var result []*EventGroup
 	idx := 0

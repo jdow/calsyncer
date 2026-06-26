@@ -146,6 +146,11 @@ func (s *Syncer) syncSource(ctx context.Context, src config.SourceConfig) error 
 	stats.Fetched = len(groups)
 	logger.Info("fetched event groups", "count", stats.Fetched)
 
+	loc, err := s.cfg.Location()
+	if err != nil {
+		return fmt.Errorf("resolving timezone: %w", err)
+	}
+
 	// Apply transforms, then split multi-day events into per-day segments.
 	type keptGroup struct {
 		key      string
@@ -161,7 +166,7 @@ func (s *Syncer) syncSource(ctx context.Context, src config.SourceConfig) error 
 			continue
 		}
 
-		splitGroups := ical.SplitMultiDayGroup(transformed)
+		splitGroups := ical.SplitMultiDayGroup(transformed, loc)
 		for _, sg := range splitGroups {
 			kept = append(kept, keptGroup{
 				key:      src.Name + "|" + sg.Key,

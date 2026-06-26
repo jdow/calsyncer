@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jdow/calsyncer/internal/config"
 )
@@ -140,6 +141,63 @@ func TestValidate_UnsupportedSourceType(t *testing.T) {
 	_, err := config.LoadConfig(path)
 	if err == nil {
 		t.Fatal("expected error for unsupported source type")
+	}
+}
+
+func TestLocation_Default(t *testing.T) {
+	cfg := &config.Config{}
+	loc, err := cfg.Location()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if loc != time.Local {
+		t.Errorf("expected time.Local, got %v", loc)
+	}
+}
+
+func TestLocation_Valid(t *testing.T) {
+	cfg := &config.Config{Timezone: "America/Los_Angeles"}
+	loc, err := cfg.Location()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if loc.String() != "America/Los_Angeles" {
+		t.Errorf("expected America/Los_Angeles, got %v", loc)
+	}
+}
+
+func TestLocation_Invalid(t *testing.T) {
+	cfg := &config.Config{Timezone: "Not/ATimezone"}
+	_, err := cfg.Location()
+	if err == nil {
+		t.Fatal("expected error for invalid timezone")
+	}
+}
+
+func TestValidate_InvalidTimezone(t *testing.T) {
+	path := writeConfigFile(t, `{
+		"timezone": "Not/ATimezone",
+		"destination": {"url":"http://x","username":"u","password":"p","calendarName":"c"},
+		"sources": [{"name":"s","type":"ical","url":"http://x"}]
+	}`)
+	_, err := config.LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for invalid timezone")
+	}
+}
+
+func TestLoadConfig_WithTimezone(t *testing.T) {
+	path := writeConfigFile(t, `{
+		"timezone": "America/New_York",
+		"destination": {"url":"http://x","username":"u","password":"p","calendarName":"c"},
+		"sources": [{"name":"s","type":"ical","url":"http://x"}]
+	}`)
+	cfg, err := config.LoadConfig(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Timezone != "America/New_York" {
+		t.Errorf("expected America/New_York, got %q", cfg.Timezone)
 	}
 }
 
