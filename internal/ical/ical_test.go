@@ -133,7 +133,7 @@ func TestSplitMultiDayGroup_NoDTSTART(t *testing.T) {
 	ev.Props.SetText(goical.PropSummary, "No DTSTART")
 	g := &ical.EventGroup{UID: "uid-nodtstart", Key: "uid-nodtstart", Parent: ev}
 
-	result := ical.SplitMultiDayGroup(g)
+	result := ical.SplitMultiDayGroup(g, time.Local)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 group for event with no DTSTART, got %d", len(result))
 	}
@@ -151,15 +151,15 @@ func TestSplitMultiDayGroup_UnparsableDTSTART(t *testing.T) {
 	ev.Props[goical.PropDateTimeStart] = []goical.Prop{*p}
 
 	g := &ical.EventGroup{UID: "uid-badstart", Key: "uid-badstart", Parent: ev}
-	result := ical.SplitMultiDayGroup(g)
+	result := ical.SplitMultiDayGroup(g, time.Local)
 	if len(result) != 1 || result[0] != g {
 		t.Error("expected original group for unparseable DTSTART")
 	}
 }
 
 func TestSplitMultiDayGroup_DurationProp(t *testing.T) {
-	// Event with DURATION instead of DTEND spanning two local days:
-	// starts at 22:00 local, 4h duration → ends 02:00 local next day.
+	// Event with DURATION spanning only adjacent local days (22:00 → 02:00 next day)
+	// should NOT be split — no all-day middle segment exists.
 	start := time.Date(2024, 1, 15, 22, 0, 0, 0, time.Local)
 	ev := goical.NewComponent(goical.CompEvent)
 	ev.Props.SetText(goical.PropUID, "uid-dur")
@@ -174,9 +174,12 @@ func TestSplitMultiDayGroup_DurationProp(t *testing.T) {
 	key := "uid-dur:" + start.Format("20060102T150405Z")
 	g := &ical.EventGroup{UID: "uid-dur", Key: key, Parent: ev}
 
-	result := ical.SplitMultiDayGroup(g)
-	if len(result) != 2 {
-		t.Fatalf("expected 2 segments for duration-based multi-day event, got %d", len(result))
+	result := ical.SplitMultiDayGroup(g, time.Local)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 segment for adjacent-day duration event, got %d", len(result))
+	}
+	if result[0] != g {
+		t.Error("expected original group returned unchanged")
 	}
 }
 
@@ -193,7 +196,7 @@ func TestSplitMultiDayGroup_UnparsableDTEND(t *testing.T) {
 	ev.Props[goical.PropDateTimeEnd] = []goical.Prop{*pe}
 
 	g := &ical.EventGroup{UID: "uid-badend", Key: "uid-badend", Parent: ev}
-	result := ical.SplitMultiDayGroup(g)
+	result := ical.SplitMultiDayGroup(g, time.Local)
 	if len(result) != 1 || result[0] != g {
 		t.Error("expected original group for unparseable DTEND")
 	}
@@ -212,7 +215,7 @@ func TestSplitMultiDayGroup_UnparsableDuration(t *testing.T) {
 	ev.Props[goical.PropDuration] = []goical.Prop{*dur}
 
 	g := &ical.EventGroup{UID: "uid-baddur", Key: "uid-baddur", Parent: ev}
-	result := ical.SplitMultiDayGroup(g)
+	result := ical.SplitMultiDayGroup(g, time.Local)
 	if len(result) != 1 || result[0] != g {
 		t.Error("expected original group for unparseable DURATION")
 	}
@@ -231,7 +234,7 @@ func TestSplitMultiDayGroup_NoDTEND(t *testing.T) {
 	key := "uid-nodtend:" + start.Format("20060102T150405Z")
 	g := &ical.EventGroup{UID: "uid-nodtend", Key: key, Parent: ev}
 
-	result := ical.SplitMultiDayGroup(g)
+	result := ical.SplitMultiDayGroup(g, time.Local)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 group for zero-duration event, got %d", len(result))
 	}
@@ -281,7 +284,7 @@ func TestSplitMultiDayGroup_SingleDay(t *testing.T) {
 	end := time.Date(2024, 1, 15, 17, 0, 0, 0, time.Local)
 	g := makeTimedGroup("uid1", "Single Day", start, end)
 
-	result := ical.SplitMultiDayGroup(g)
+	result := ical.SplitMultiDayGroup(g, time.Local)
 	if len(result) != 1 {
 		t.Errorf("expected 1 group, got %d", len(result))
 	}
@@ -291,19 +294,19 @@ func TestSplitMultiDayGroup_SingleDay(t *testing.T) {
 }
 
 func TestSplitMultiDayGroup_TwoDay(t *testing.T) {
-	// Mon 09:00 → Tue 17:00 local — should produce 2 timed segments.
+	// Mon 09:00 → Tue 17:00 local — spans adjacent days only, no all-day middle
+	// segment would ever exist, so it should NOT be split.
 	start := time.Date(2024, 1, 15, 9, 0, 0, 0, time.Local)
 	end := time.Date(2024, 1, 16, 17, 0, 0, 0, time.Local)
-	midnight := time.Date(2024, 1, 16, 0, 0, 0, 0, time.Local)
 	g := makeTimedGroup("uid1", "Two Day", start, end)
 
-	result := ical.SplitMultiDayGroup(g)
-	if len(result) != 2 {
-		t.Fatalf("expected 2 groups, got %d", len(result))
+	result := ical.SplitMultiDayGroup(g, time.Local)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 group (adjacent-day span should not be split), got %d", len(result))
 	}
-
-	checkTimedSegment(t, result[0], start, midnight.UTC(), "uid1:20240115T090000Z:split:0")
-	checkTimedSegment(t, result[1], midnight.UTC(), end, "uid1:20240115T090000Z:split:1")
+	if result[0] != g {
+		t.Error("expected original group returned unchanged")
+	}
 }
 
 func TestSplitMultiDayGroup_ThreeDay(t *testing.T) {
@@ -312,7 +315,7 @@ func TestSplitMultiDayGroup_ThreeDay(t *testing.T) {
 	end := time.Date(2024, 1, 17, 17, 0, 0, 0, time.Local)
 	g := makeTimedGroup("uid1", "Three Day", start, end)
 
-	result := ical.SplitMultiDayGroup(g)
+	result := ical.SplitMultiDayGroup(g, time.Local)
 	if len(result) != 3 {
 		t.Fatalf("expected 3 groups, got %d", len(result))
 	}
@@ -347,7 +350,7 @@ func TestSplitMultiDayGroup_Recurring(t *testing.T) {
 	rrule.Value = "FREQ=WEEKLY"
 	g.Parent.Props[goical.PropRecurrenceRule] = []goical.Prop{*rrule}
 
-	result := ical.SplitMultiDayGroup(g)
+	result := ical.SplitMultiDayGroup(g, time.Local)
 	if len(result) != 1 {
 		t.Errorf("recurring event should not be split, got %d groups", len(result))
 	}
@@ -360,7 +363,7 @@ func TestSplitMultiDayGroup_AllDayInput(t *testing.T) {
 	// DATE-only DTSTART should not be split
 	g := makeDateGroup("uid1", "All Day", "20240115", "20240117")
 
-	result := ical.SplitMultiDayGroup(g)
+	result := ical.SplitMultiDayGroup(g, time.Local)
 	if len(result) != 1 {
 		t.Errorf("all-day event should not be split, got %d groups", len(result))
 	}
@@ -369,17 +372,35 @@ func TestSplitMultiDayGroup_AllDayInput(t *testing.T) {
 	}
 }
 
+func TestSplitMultiDayGroup_OncallAdjacentDay(t *testing.T) {
+	// Regression: Mon 09:00 → Tue 08:00 local (oncall-style handoff). Crosses midnight
+	// but never spans a full calendar day, so it must NOT be split.
+	start := time.Date(2024, 1, 15, 9, 0, 0, 0, time.Local)
+	end := time.Date(2024, 1, 16, 8, 0, 0, 0, time.Local)
+	g := makeTimedGroup("uid1", "Oncall", start, end)
+
+	result := ical.SplitMultiDayGroup(g, time.Local)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 group for adjacent-day oncall event, got %d", len(result))
+	}
+	if result[0] != g {
+		t.Error("expected original group returned unchanged")
+	}
+}
+
 func TestSplitMultiDayGroup_MidnightEnd(t *testing.T) {
-	// Mon 09:00 → Tue 00:00 local: DTEND is exactly midnight, so no zero-duration last segment.
+	// Mon 09:00 → Tue 00:00 local: adjacent days only, no split needed.
 	start := time.Date(2024, 1, 15, 9, 0, 0, 0, time.Local)
 	end := time.Date(2024, 1, 16, 0, 0, 0, 0, time.Local)
 	g := makeTimedGroup("uid1", "Midnight End", start, end)
 
-	result := ical.SplitMultiDayGroup(g)
+	result := ical.SplitMultiDayGroup(g, time.Local)
 	if len(result) != 1 {
-		t.Fatalf("expected 1 group (no zero-duration last segment), got %d", len(result))
+		t.Fatalf("expected 1 group (adjacent-day span should not be split), got %d", len(result))
 	}
-	checkTimedSegment(t, result[0], start, end.UTC(), "uid1:20240115T090000Z:split:0")
+	if result[0] != g {
+		t.Error("expected original group returned unchanged")
+	}
 }
 
 func checkTimedSegment(t *testing.T, seg *ical.EventGroup, wantStart, wantEnd time.Time, wantKey string) {

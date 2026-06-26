@@ -1,4 +1,5 @@
 {
+  "timezone": "America/Los_Angeles",
   "destination": {
     "url": "https://caldav.icloud.com",
     "username": "you@icloud.com",

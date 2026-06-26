@@ -5,12 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 )
 
 // Config is the top-level structure of config.json.
 type Config struct {
 	Destination DestinationConfig `json:"destination"`
 	Sources     []SourceConfig    `json:"sources"`
+	// Timezone is an IANA timezone name (e.g. "America/Los_Angeles") used to
+	// determine calendar day boundaries when splitting multi-day events. Defaults
+	// to the system local timezone if omitted, but setting it explicitly is
+	// recommended when running in a Docker container where the system timezone
+	// may not match the user's calendar timezone.
+	Timezone string `json:"timezone,omitempty"`
 }
 
 // DestinationConfig is the CalDAV calendar that events are written into.
@@ -69,6 +76,19 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+// Location returns the timezone to use for calendar day-boundary calculations.
+// Returns time.Local if Timezone is not configured.
+func (c *Config) Location() (*time.Location, error) {
+	if c.Timezone == "" {
+		return time.Local, nil
+	}
+	loc, err := time.LoadLocation(c.Timezone)
+	if err != nil {
+		return nil, fmt.Errorf("invalid timezone %q: %w", c.Timezone, err)
+	}
+	return loc, nil
+}
+
 func (c *Config) validate() error {
 	d := c.Destination
 	if d.URL == "" {
@@ -82,6 +102,12 @@ func (c *Config) validate() error {
 	}
 	if d.CalendarName == "" {
 		return fmt.Errorf("destination.calendarName is required")
+	}
+
+	if c.Timezone != "" {
+		if _, err := time.LoadLocation(c.Timezone); err != nil {
+			return fmt.Errorf("invalid timezone %q: %w", c.Timezone, err)
+		}
 	}
 
 	names := make(map[string]bool)
