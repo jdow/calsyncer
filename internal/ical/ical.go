@@ -113,12 +113,16 @@ func CloneComponent(ev *goical.Component) *goical.Component {
 	return dst
 }
 
-// IsAllDayBusy reports whether group is a free/busy-only placeholder: an
-// event titled exactly "Busy" that spans one or more full calendar days.
-// Some providers (e.g. Google's public/basic.ics export) never emit a real
-// VALUE=DATE all-day event, instead representing all-day spans as a
-// DATE-TIME running from local midnight to local midnight — so both forms
-// are recognized here. loc determines where calendar day boundaries fall.
+// IsAllDayBusy reports whether group is a free/busy-only placeholder that
+// should be dropped entirely: an event titled exactly "Busy" that is either
+// a real VALUE=DATE all-day event, or a timed event that spans at least one
+// full calendar day and would therefore get split into all-day middle
+// segments by SplitMultiDayGroup. In the latter case the whole event is
+// considered a placeholder — including its leading/trailing timed slivers —
+// since a free/busy block carries no useful information regardless of which
+// day of it you're looking at. loc determines where calendar day boundaries
+// fall, and must match the loc passed to SplitMultiDayGroup so the two
+// agree on what counts as a full day.
 func IsAllDayBusy(group *EventGroup, loc *time.Location) bool {
 	if PropValue(group.Parent, goical.PropSummary) != "Busy" {
 		return false
@@ -132,16 +136,26 @@ func IsAllDayBusy(group *EventGroup, loc *time.Location) bool {
 		return true
 	}
 
-	if loc == nil {
-		loc = time.Local
+	// Recurring events are never split by SplitMultiDayGroup, so the
+	// day-span check below doesn't apply to them.
+	if group.Parent.Props.Get(goical.PropRecurrenceRule) != nil {
+		return false
 	}
+
 	dtStart, dtEnd, err := eventTimeRange(group.Parent)
 	if err != nil {
 		return false
 	}
-	return dtStart.Equal(truncateToDay(dtStart, loc)) &&
-		dtEnd.Equal(truncateToDay(dtEnd, loc)) &&
-		dtEnd.After(dtStart)
+
+	if loc == nil {
+		loc = time.Local
+	}
+	startDay := truncateToDay(dtStart, loc)
+	endDay := truncateToDay(dtEnd, loc)
+
+	// Mirrors SplitMultiDayGroup's own split condition: true only if there's
+	// at least one full calendar day strictly between the start and end day.
+	return endDay.After(startDay.AddDate(0, 0, 1))
 }
 
 // SplitMultiDayGroup splits a timed event that spans multiple calendar days into

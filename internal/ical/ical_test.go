@@ -373,14 +373,24 @@ func TestSplitMultiDayGroup_AllDayInput(t *testing.T) {
 
 func TestIsAllDayBusy(t *testing.T) {
 	// Google's public/basic.ics export never emits VALUE=DATE — a multi-day
-	// OOO/busy placeholder shows up as a plain DATE-TIME running from local
-	// midnight to local midnight, so this must be recognized too.
+	// OOO/busy placeholder shows up as a plain DATE-TIME, and its edges
+	// often aren't even midnight-aligned (e.g. Aug 17 08:00 -> Aug 21 17:00
+	// Pacific for a work OOO block). Any "Busy" event spanning at least one
+	// full calendar day in between must be recognized and dropped whole,
+	// not just the all-day middle days SplitMultiDayGroup would carve out.
 	midnightToMidnight := makeTimedGroup("uid1", "Busy",
 		time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC),
 		time.Date(2024, 1, 22, 0, 0, 0, 0, time.UTC))
-	notMidnightAligned := makeTimedGroup("uid1", "Busy",
-		time.Date(2024, 1, 15, 7, 0, 0, 0, time.UTC),
-		time.Date(2024, 1, 22, 7, 0, 0, 0, time.UTC))
+	offsetEdges := makeTimedGroup("uid1", "Busy",
+		time.Date(2024, 1, 15, 8, 0, 0, 0, time.UTC),
+		time.Date(2024, 1, 19, 17, 0, 0, 0, time.UTC))
+	adjacentDayOnly := makeTimedGroup("uid1", "Busy",
+		time.Date(2024, 1, 15, 20, 0, 0, 0, time.UTC),
+		time.Date(2024, 1, 16, 8, 0, 0, 0, time.UTC))
+	recurringMultiDay := makeTimedGroup("uid1", "Busy",
+		time.Date(2024, 1, 15, 8, 0, 0, 0, time.UTC),
+		time.Date(2024, 1, 19, 17, 0, 0, 0, time.UTC))
+	recurringMultiDay.Parent.Props.SetText(goical.PropRecurrenceRule, "FREQ=WEEKLY")
 
 	cases := []struct {
 		name string
@@ -389,10 +399,12 @@ func TestIsAllDayBusy(t *testing.T) {
 	}{
 		{"all-day Busy", makeDateGroup("uid1", "Busy", "20240115", "20240116"), true},
 		{"all-day other summary", makeDateGroup("uid1", "Vacation", "20240115", "20240116"), false},
-		{"timed Busy", makeGroup("uid1", "Busy", "20240115T090000Z", "20240115T100000Z"), false},
+		{"timed Busy, same day", makeGroup("uid1", "Busy", "20240115T090000Z", "20240115T100000Z"), false},
 		{"all-day lowercase busy", makeDateGroup("uid1", "busy", "20240115", "20240116"), false},
 		{"midnight-to-midnight Busy (Google OOO export)", midnightToMidnight, true},
-		{"midnight-offset Busy (not day-aligned)", notMidnightAligned, false},
+		{"offset-edge multi-day Busy (real OOO shape)", offsetEdges, true},
+		{"adjacent-day-only Busy (no full day between)", adjacentDayOnly, false},
+		{"recurring multi-day Busy (never split, so not swallowed)", recurringMultiDay, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
