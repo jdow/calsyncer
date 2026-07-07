@@ -372,6 +372,16 @@ func TestSplitMultiDayGroup_AllDayInput(t *testing.T) {
 }
 
 func TestIsAllDayBusy(t *testing.T) {
+	// Google's public/basic.ics export never emits VALUE=DATE — a multi-day
+	// OOO/busy placeholder shows up as a plain DATE-TIME running from local
+	// midnight to local midnight, so this must be recognized too.
+	midnightToMidnight := makeTimedGroup("uid1", "Busy",
+		time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC),
+		time.Date(2024, 1, 22, 0, 0, 0, 0, time.UTC))
+	notMidnightAligned := makeTimedGroup("uid1", "Busy",
+		time.Date(2024, 1, 15, 7, 0, 0, 0, time.UTC),
+		time.Date(2024, 1, 22, 7, 0, 0, 0, time.UTC))
+
 	cases := []struct {
 		name string
 		g    *ical.EventGroup
@@ -381,10 +391,12 @@ func TestIsAllDayBusy(t *testing.T) {
 		{"all-day other summary", makeDateGroup("uid1", "Vacation", "20240115", "20240116"), false},
 		{"timed Busy", makeGroup("uid1", "Busy", "20240115T090000Z", "20240115T100000Z"), false},
 		{"all-day lowercase busy", makeDateGroup("uid1", "busy", "20240115", "20240116"), false},
+		{"midnight-to-midnight Busy (Google OOO export)", midnightToMidnight, true},
+		{"midnight-offset Busy (not day-aligned)", notMidnightAligned, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ical.IsAllDayBusy(tc.g); got != tc.want {
+			if got := ical.IsAllDayBusy(tc.g, time.UTC); got != tc.want {
 				t.Errorf("IsAllDayBusy() = %v, want %v", got, tc.want)
 			}
 		})

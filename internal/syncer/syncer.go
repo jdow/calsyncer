@@ -163,7 +163,7 @@ func (s *Syncer) syncSource(ctx context.Context, src config.SourceConfig) error 
 	var kept []keptGroup
 
 	for _, group := range groups {
-		if src.IgnoreAllDayBusy && ical.IsAllDayBusy(group) {
+		if src.IgnoreAllDayBusy && ical.IsAllDayBusy(group, loc) {
 			stats.AllDayBusySkip++
 			continue
 		}
