@@ -483,6 +483,55 @@ func TestSyncer_IgnoreAllDayBusy_MidnightToMidnightGoogleExport(t *testing.T) {
 	}
 }
 
+func TestSyncer_IgnoreAllDayBusy_OffsetEdgeMultiDay(t *testing.T) {
+	// Regression: a real OOO block from Google's public/basic.ics export —
+	// Aug 17 08:00 -> Aug 21 17:00 America/Los_Angeles. Neither edge is
+	// midnight-aligned, but it spans full calendar days in between, so the
+	// *entire* event (not just the all-day middle days) must be dropped.
+	start := time.Date(2026, 8, 17, 15, 0, 0, 0, time.UTC) // 08:00 PDT
+	end := time.Date(2026, 8, 22, 0, 0, 0, 0, time.UTC)    // Aug 21 17:00 PDT
+	g := makeTimedGroup("uid1", "Busy", start, end)
+
+	dest := &mockCalDAVClient{
+		calURL:  "/calendars/user/main/",
+		objects: map[string]*caldav.SyncedObject{},
+	}
+	fetcher := &mockFetcher{
+		groups: map[string]*ical.EventGroup{g.Key: g},
+	}
+	cfg := &config.Config{
+		Timezone: "America/Los_Angeles",
+		Sources: []config.SourceConfig{{
+			Name:             "src1",
+			Type:             "ical",
+			URL:              "http://example.com/cal.ics",
+			IgnoreAllDayBusy: true,
+		}},
+	}
+
+	s, err := syncer.NewSyncer(
+		syncer.WithCalDAVClient(dest),
+		syncer.WithICalFetcher(fetcher),
+		syncer.WithConfig(cfg),
+		syncer.WithLogger(discardLogger()),
+		syncer.WithUpdate(true),
+	)
+	if err != nil {
+		t.Fatalf("NewSyncer: %v", err)
+	}
+
+	if err := s.Run(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(dest.puts) != 0 {
+		t.Errorf("expected 0 Puts (offset-edge multi-day Busy dropped whole), got %d", len(dest.puts))
+	}
+	if s.AllDayBusySkip != 1 {
+		t.Errorf("expected AllDayBusySkip=1, got %d", s.AllDayBusySkip)
+	}
+}
+
 func TestSyncer_IgnoreAllDayBusy_FlagOffStillSyncs(t *testing.T) {
 	// Same "Busy" all-day event, but the flag is off (default) — should sync normally.
 	g := makeDateGroup("uid1", "Busy", "20240115", "20240116")
