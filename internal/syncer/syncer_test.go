@@ -429,6 +429,60 @@ func TestSyncer_IgnoreAllDayBusy(t *testing.T) {
 	}
 }
 
+func TestSyncer_IgnoreAllDayBusy_MidnightToMidnightGoogleExport(t *testing.T) {
+	// Regression: Google's public/basic.ics export never emits VALUE=DATE —
+	// a multi-day OOO placeholder shows up as a plain local-midnight-to-
+	// local-midnight DATE-TIME. It must still be dropped, and dropped
+	// *before* a same-source "Busy" rename transform gets a chance to
+	// rewrite its summary out from under the check.
+	start := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2024, 1, 22, 0, 0, 0, 0, time.UTC)
+	g := makeTimedGroup("uid1", "Busy", start, end)
+
+	dest := &mockCalDAVClient{
+		calURL:  "/calendars/user/main/",
+		objects: map[string]*caldav.SyncedObject{},
+	}
+	fetcher := &mockFetcher{
+		groups: map[string]*ical.EventGroup{g.Key: g},
+	}
+	cfg := &config.Config{
+		Timezone: "UTC",
+		Sources: []config.SourceConfig{{
+			Name: "src1",
+			Type: "ical",
+			URL:  "http://example.com/cal.ics",
+			Transforms: []config.TransformConfig{{
+				WhenSummary: "Busy",
+				SetSummary:  "renamed meeting",
+			}},
+			IgnoreAllDayBusy: true,
+		}},
+	}
+
+	s, err := syncer.NewSyncer(
+		syncer.WithCalDAVClient(dest),
+		syncer.WithICalFetcher(fetcher),
+		syncer.WithConfig(cfg),
+		syncer.WithLogger(discardLogger()),
+		syncer.WithUpdate(true),
+	)
+	if err != nil {
+		t.Fatalf("NewSyncer: %v", err)
+	}
+
+	if err := s.Run(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(dest.puts) != 0 {
+		t.Errorf("expected 0 Puts (midnight-to-midnight Busy dropped), got %d", len(dest.puts))
+	}
+	if s.AllDayBusySkip != 1 {
+		t.Errorf("expected AllDayBusySkip=1, got %d", s.AllDayBusySkip)
+	}
+}
+
 func TestSyncer_IgnoreAllDayBusy_FlagOffStillSyncs(t *testing.T) {
 	// Same "Busy" all-day event, but the flag is off (default) — should sync normally.
 	g := makeDateGroup("uid1", "Busy", "20240115", "20240116")
