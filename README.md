@@ -113,6 +113,7 @@ Each source is an iCal subscription URL. All sources sync into the same destinat
 | `url` | The `.ics` subscription URL |
 | `emoji` | Optional prefix prepended to every event title (e.g. `"🔴"`) |
 | `transforms` | Optional list of transform rules applied in order (see below) |
+| `ignoreAllDayBusy` | If `true`, drops all-day events whose title is exactly `"Busy"` — the placeholder Google/Outlook export for calendars shared with free/busy-only visibility |
 
 ### Transforms
 
