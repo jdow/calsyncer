@@ -18,13 +18,13 @@ import (
 // --- Mock types ---
 
 type mockCalDAVClient struct {
-	calURL     string
-	objects    map[string]*caldav.SyncedObject // keyed by "source|key"
-	puts       []string                        // paths put
-	deletes    []string                        // paths deleted
-	fetchError error                           // if set, FetchSyncedObjects returns this
-	putError   error                           // if set, PutCalendarObject returns this
-	deleteError error                          // if set, DeleteCalendarObject returns this
+	calURL      string
+	objects     map[string]*caldav.SyncedObject // keyed by "source|key"
+	puts        []string                        // paths put
+	deletes     []string                        // paths deleted
+	fetchError  error                           // if set, FetchSyncedObjects returns this
+	putError    error                           // if set, PutCalendarObject returns this
+	deleteError error                           // if set, DeleteCalendarObject returns this
 }
 
 func (m *mockCalDAVClient) CalendarURL() string {
@@ -364,6 +364,103 @@ func TestSyncer_TransformSkip(t *testing.T) {
 
 	if len(dest.puts) != 0 {
 		t.Errorf("transform skip: expected 0 Puts, got %d", len(dest.puts))
+	}
+}
+
+func makeDateGroup(uid, summary, dtstart, dtend string) *ical.EventGroup {
+	ev := goical.NewComponent(goical.CompEvent)
+	ev.Props.SetText(goical.PropUID, uid)
+	ev.Props.SetText(goical.PropSummary, summary)
+
+	start, _ := time.ParseInLocation("20060102", dtstart, time.UTC)
+	end, _ := time.ParseInLocation("20060102", dtend, time.UTC)
+
+	ps := goical.NewProp(goical.PropDateTimeStart)
+	ps.SetDate(start)
+	ev.Props[goical.PropDateTimeStart] = []goical.Prop{*ps}
+
+	pe := goical.NewProp(goical.PropDateTimeEnd)
+	pe.SetDate(end)
+	ev.Props[goical.PropDateTimeEnd] = []goical.Prop{*pe}
+
+	key := uid + ":" + dtstart
+	return &ical.EventGroup{UID: uid, Key: key, Parent: ev}
+}
+
+func TestSyncer_IgnoreAllDayBusy(t *testing.T) {
+	g := makeDateGroup("uid1", "Busy", "20240115", "20240116")
+
+	dest := &mockCalDAVClient{
+		calURL:  "/calendars/user/main/",
+		objects: map[string]*caldav.SyncedObject{},
+	}
+	fetcher := &mockFetcher{
+		groups: map[string]*ical.EventGroup{g.Key: g},
+	}
+	cfg := &config.Config{
+		Sources: []config.SourceConfig{{
+			Name:             "src1",
+			Type:             "ical",
+			URL:              "http://example.com/cal.ics",
+			IgnoreAllDayBusy: true,
+		}},
+	}
+
+	s, err := syncer.NewSyncer(
+		syncer.WithCalDAVClient(dest),
+		syncer.WithICalFetcher(fetcher),
+		syncer.WithConfig(cfg),
+		syncer.WithLogger(discardLogger()),
+		syncer.WithUpdate(true),
+	)
+	if err != nil {
+		t.Fatalf("NewSyncer: %v", err)
+	}
+
+	if err := s.Run(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(dest.puts) != 0 {
+		t.Errorf("ignoreAllDayBusy: expected 0 Puts, got %d", len(dest.puts))
+	}
+	if s.AllDayBusySkip != 1 {
+		t.Errorf("expected AllDayBusySkip=1, got %d", s.AllDayBusySkip)
+	}
+}
+
+func TestSyncer_IgnoreAllDayBusy_FlagOffStillSyncs(t *testing.T) {
+	// Same "Busy" all-day event, but the flag is off (default) — should sync normally.
+	g := makeDateGroup("uid1", "Busy", "20240115", "20240116")
+
+	dest := &mockCalDAVClient{
+		calURL:  "/calendars/user/main/",
+		objects: map[string]*caldav.SyncedObject{},
+	}
+	fetcher := &mockFetcher{
+		groups: map[string]*ical.EventGroup{g.Key: g},
+	}
+	cfg := &config.Config{
+		Sources: []config.SourceConfig{{Name: "src1", Type: "ical", URL: "http://example.com/cal.ics"}},
+	}
+
+	s, err := syncer.NewSyncer(
+		syncer.WithCalDAVClient(dest),
+		syncer.WithICalFetcher(fetcher),
+		syncer.WithConfig(cfg),
+		syncer.WithLogger(discardLogger()),
+		syncer.WithUpdate(true),
+	)
+	if err != nil {
+		t.Fatalf("NewSyncer: %v", err)
+	}
+
+	if err := s.Run(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(dest.puts) != 1 {
+		t.Errorf("flag off: expected 1 Put, got %d", len(dest.puts))
 	}
 }
 

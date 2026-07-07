@@ -28,13 +28,14 @@ type ICalFetcher interface {
 }
 
 type sourceStats struct {
-	Fetched       int
-	Created       int
-	Updated       int
-	Skipped       int // hash matched — no write needed
-	Deleted       int
-	TransformSkip int // event dropped by a skip transform
-	TransformEdit int // event summary rewritten by a transform
+	Fetched        int
+	Created        int
+	Updated        int
+	Skipped        int // hash matched — no write needed
+	Deleted        int
+	TransformSkip  int // event dropped by a skip transform
+	TransformEdit  int // event summary rewritten by a transform
+	AllDayBusySkip int // all-day "Busy" placeholder dropped by ignoreAllDayBusy
 }
 
 // Syncer runs the sync for all configured sources.
@@ -47,12 +48,13 @@ type Syncer struct {
 	dryRun         bool
 
 	// Totals across all sources, accumulated after each source completes.
-	Deleted       int
-	Updated       int
-	Created       int
-	Skipped       int
-	TransformSkip int
-	TransformEdit int
+	Deleted        int
+	Updated        int
+	Created        int
+	Skipped        int
+	TransformSkip  int
+	TransformEdit  int
+	AllDayBusySkip int
 }
 
 // Option is a functional option for Syncer.
@@ -129,6 +131,7 @@ func (s *Syncer) Run() error {
 		"skipped", s.Skipped,
 		"transform_skipped", s.TransformSkip,
 		"transform_edited", s.TransformEdit,
+		"all_day_busy_skipped", s.AllDayBusySkip,
 	)
 	return nil
 }
@@ -160,6 +163,11 @@ func (s *Syncer) syncSource(ctx context.Context, src config.SourceConfig) error 
 	var kept []keptGroup
 
 	for _, group := range groups {
+		if src.IgnoreAllDayBusy && ical.IsAllDayBusy(group) {
+			stats.AllDayBusySkip++
+			continue
+		}
+
 		transformed, skip, modified := applyTransforms(group, src.Transforms)
 		if skip {
 			stats.TransformSkip++
@@ -253,6 +261,7 @@ func (s *Syncer) syncSource(ctx context.Context, src config.SourceConfig) error 
 		"skipped", stats.Skipped,
 		"transform_skipped", stats.TransformSkip,
 		"transform_edited", stats.TransformEdit,
+		"all_day_busy_skipped", stats.AllDayBusySkip,
 	)
 
 	s.Created += stats.Created
@@ -261,6 +270,7 @@ func (s *Syncer) syncSource(ctx context.Context, src config.SourceConfig) error 
 	s.Skipped += stats.Skipped
 	s.TransformSkip += stats.TransformSkip
 	s.TransformEdit += stats.TransformEdit
+	s.AllDayBusySkip += stats.AllDayBusySkip
 
 	return nil
 }

@@ -46,6 +46,13 @@
       ]
     },
     {
+      "name": "partner",
+      "type": "ical",
+      "url": "https://calendar.google.com/calendar/ical/partner%40gmail.com/private-def456/basic.ics",
+      "emoji": "❤️",
+      "ignoreAllDayBusy": true
+    },
+    {
       "name": "kid-sports",
       "type": "ical",
       "url": "https://teamsnap.com/api/v3/calendars/export/your-token-here",
