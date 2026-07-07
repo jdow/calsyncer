@@ -45,6 +45,12 @@ type SourceConfig struct {
 
 	// Transforms are applied in order before events are written to the destination.
 	Transforms []TransformConfig `json:"transforms,omitempty"`
+
+	// IgnoreAllDayBusy drops all-day events whose summary is exactly "Busy" —
+	// the placeholder Google/Outlook export for calendars shared with
+	// free/busy-only visibility. These carry no real information, so most
+	// users don't want them synced.
+	IgnoreAllDayBusy bool `json:"ignoreAllDayBusy,omitempty"`
 }
 
 // TransformConfig is a rule applied to events from a source before syncing.

@@ -113,6 +113,17 @@ func CloneComponent(ev *goical.Component) *goical.Component {
 	return dst
 }
 
+// IsAllDayBusy reports whether group is an all-day event with the summary
+// "Busy" — the placeholder Google/Outlook export for calendars shared with
+// free/busy-only visibility.
+func IsAllDayBusy(group *EventGroup) bool {
+	dtStartProp := group.Parent.Props.Get(goical.PropDateTimeStart)
+	if dtStartProp == nil || dtStartProp.ValueType() != goical.ValueDate {
+		return false
+	}
+	return PropValue(group.Parent, goical.PropSummary) == "Busy"
+}
+
 // SplitMultiDayGroup splits a timed event that spans multiple calendar days into
 // per-day segments. The first and last days become timed events; any days in
 // between become all-day events. loc determines where calendar day boundaries fall.

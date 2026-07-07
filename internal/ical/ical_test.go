@@ -58,7 +58,6 @@ func mustParseDate(s string) time.Time {
 	return t
 }
 
-
 func makeTimedGroup(uid, summary string, dtstart, dtend time.Time) *ical.EventGroup {
 	ev := goical.NewComponent(goical.CompEvent)
 	ev.Props.SetText(goical.PropUID, uid)
@@ -369,6 +368,26 @@ func TestSplitMultiDayGroup_AllDayInput(t *testing.T) {
 	}
 	if result[0] != g {
 		t.Error("expected original group returned unchanged")
+	}
+}
+
+func TestIsAllDayBusy(t *testing.T) {
+	cases := []struct {
+		name string
+		g    *ical.EventGroup
+		want bool
+	}{
+		{"all-day Busy", makeDateGroup("uid1", "Busy", "20240115", "20240116"), true},
+		{"all-day other summary", makeDateGroup("uid1", "Vacation", "20240115", "20240116"), false},
+		{"timed Busy", makeGroup("uid1", "Busy", "20240115T090000Z", "20240115T100000Z"), false},
+		{"all-day lowercase busy", makeDateGroup("uid1", "busy", "20240115", "20240116"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ical.IsAllDayBusy(tc.g); got != tc.want {
+				t.Errorf("IsAllDayBusy() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
