@@ -142,14 +142,14 @@ func IsAllDayBusy(group *EventGroup, loc *time.Location) bool {
 		return false
 	}
 
-	dtStart, dtEnd, err := eventTimeRange(group.Parent)
+	if loc == nil {
+		loc = time.Local
+	}
+	dtStart, dtEnd, err := eventTimeRange(group.Parent, loc)
 	if err != nil {
 		return false
 	}
 
-	if loc == nil {
-		loc = time.Local
-	}
 	startDay := truncateToDay(dtStart, loc)
 	endDay := truncateToDay(dtEnd, loc)
 
@@ -179,13 +179,12 @@ func SplitMultiDayGroup(group *EventGroup, loc *time.Location) []*EventGroup {
 		return []*EventGroup{group}
 	}
 
-	dtStart, dtEnd, err := eventTimeRange(group.Parent)
-	if err != nil {
-		return []*EventGroup{group}
-	}
-
 	if loc == nil {
 		loc = time.Local
+	}
+	dtStart, dtEnd, err := eventTimeRange(group.Parent, loc)
+	if err != nil {
+		return []*EventGroup{group}
 	}
 
 	startDay := truncateToDay(dtStart, loc)
@@ -230,18 +229,22 @@ func SplitMultiDayGroup(group *EventGroup, loc *time.Location) []*EventGroup {
 	return result
 }
 
-// eventTimeRange returns the start and end time of a VEVENT.
+// eventTimeRange returns the start and end time of a VEVENT. loc is used as
+// the fallback location for DTSTART/DTEND values that carry neither a TZID
+// nor a UTC (Z) suffix; it must match the loc passed by the caller so a
+// floating time is interpreted in the user's configured timezone rather
+// than the server's.
 // If DTEND is absent but DURATION is present, DTEND is computed as DTSTART + DURATION.
-func eventTimeRange(ev *goical.Component) (dtStart, dtEnd time.Time, err error) {
+func eventTimeRange(ev *goical.Component, loc *time.Location) (dtStart, dtEnd time.Time, err error) {
 	dtStartProp := ev.Props.Get(goical.PropDateTimeStart)
-	dtStart, err = dtStartProp.DateTime(time.Local)
+	dtStart, err = dtStartProp.DateTime(loc)
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("parsing DTSTART: %w", err)
 	}
 
 	dtEndProp := ev.Props.Get(goical.PropDateTimeEnd)
 	if dtEndProp != nil {
-		dtEnd, err = dtEndProp.DateTime(time.Local)
+		dtEnd, err = dtEndProp.DateTime(loc)
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("parsing DTEND: %w", err)
 		}
