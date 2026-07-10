@@ -446,6 +446,39 @@ func TestSplitMultiDayGroup_MidnightEnd(t *testing.T) {
 	}
 }
 
+func TestSplitMultiDayGroup_FloatingTimeUsesConfiguredLoc(t *testing.T) {
+	// DTSTART/DTEND with no TZID and no Z suffix (a "floating" local time) must
+	// be interpreted in the loc passed by the caller (the user's configured
+	// timezone), not in some other default — otherwise day-boundary math and
+	// segment instants come out wrong whenever the server's OS timezone
+	// (commonly UTC in a Docker container) doesn't match the user's calendar.
+	// Asia/Kolkata (fixed +5:30, no DST) is chosen so this fails regardless of
+	// the machine running the test: it isn't UTC, and it isn't likely to be
+	// whatever the test runner's own time.Local happens to be either.
+	loc, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		t.Fatalf("loading location: %v", err)
+	}
+
+	// 11pm Jan 15 -> 5pm Jan 19, floating (no TZID/Z on the raw value).
+	g := makeGroup("uid1", "OOO", "20240115T230000", "20240119T170000")
+
+	result := ical.SplitMultiDayGroup(g, loc)
+	if len(result) != 5 {
+		t.Fatalf("expected 5 groups (timed + 3 all-day + timed), got %d", len(result))
+	}
+
+	checkTimedSegment(t, result[0],
+		time.Date(2024, 1, 15, 17, 30, 0, 0, time.UTC),
+		time.Date(2024, 1, 15, 18, 30, 0, 0, time.UTC),
+		"uid1:20240115T230000:split:0")
+
+	checkTimedSegment(t, result[4],
+		time.Date(2024, 1, 18, 18, 30, 0, 0, time.UTC),
+		time.Date(2024, 1, 19, 11, 30, 0, 0, time.UTC),
+		"uid1:20240115T230000:split:4")
+}
+
 func checkTimedSegment(t *testing.T, seg *ical.EventGroup, wantStart, wantEnd time.Time, wantKey string) {
 	t.Helper()
 	if seg.Key != wantKey {
